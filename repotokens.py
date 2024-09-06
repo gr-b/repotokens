@@ -2,6 +2,9 @@ import os
 import tiktoken
 from pathlib import Path
 import fnmatch
+import argparse
+
+VERSION = "1.0.0"
 
 DEFAULT_IGNORE_PATTERNS = [
     # IDE and editor
@@ -41,6 +44,19 @@ DEFAULT_IGNORE_PATTERNS = [
     # Additional directories
     '.github/'
 ]
+
+# OpenAI model information
+MODELS = {
+    "gpt-4o": {"input_price": 5.00, "output_price": 15.00},
+    "gpt-4o-2024-08-06": {"input_price": 2.50, "output_price": 10.00},
+    "gpt-4o-2024-05-13": {"input_price": 5.00, "output_price": 15.00},
+    "gpt-4o-mini": {"input_price": 0.150, "output_price": 0.600},
+    "gpt-4o-mini-2024-07-18": {"input_price": 0.150, "output_price": 0.600},
+
+    "claude-3.5-sonnet": {"input_price": 3.00, "output_price": 15.00},
+    "claude-3-opus": {"input_price": 15.00, "output_price": 75.00},
+    "claude-3.5-haiku": {"input_price": 0.25, "output_price": 1.25},
+}
 
 def load_gitignore(root_dir):
     gitignore_path = os.path.join(root_dir, '.gitignore')
@@ -91,14 +107,14 @@ def format_cost(cost):
     else:
         return f"${cost:.2f}"
 
-def main():
-    root_dir = '.'
+def analyze_directory(directory, model=None):
+    root_dir = os.path.abspath(directory)
     ignore_patterns = load_gitignore(root_dir)
     total_tokens = 0
     processed_files = 0
+    file_tokens = {}
 
     for root, dirs, files in os.walk(root_dir):
-        # Remove ignored directories
         dirs[:] = [d for d in dirs if not is_ignored(os.path.join(root, d), root_dir, ignore_patterns)]
 
         for file in files:
@@ -107,27 +123,51 @@ def main():
                 tokens = count_tokens(file_path)
                 total_tokens += tokens
                 processed_files += 1
+                file_tokens[str(file_path)] = tokens
                 print(f"{file_path}: {tokens} tokens")
 
-    # OpenAI model information
-    models = {
-        "gpt-4o": {"input_price": 5.00, "output_price": 15.00},
-        "gpt-4o-2024-08-06": {"input_price": 2.50, "output_price": 10.00},
-        "gpt-4o-2024-05-13": {"input_price": 5.00, "output_price": 15.00},
-        "gpt-4o-mini": {"input_price": 0.150, "output_price": 0.600},
-        "gpt-4o-mini-2024-07-18": {"input_price": 0.150, "output_price": 0.600},
+    results = {
+        "total_tokens": total_tokens,
+        "processed_files": processed_files,
+        "file_tokens": file_tokens
     }
 
-    print(f"\nEstimated costs for {total_tokens} tokens from {processed_files} different source files:")
-    for model, prices in models.items():
-        input_cost = (total_tokens / 1000000) * prices["input_price"]
-        output_cost = (total_tokens / 1000000) * prices["output_price"]
-        print(f"{model}:")
-        print(f"  Input cost: {format_cost(input_cost)}")
-        print(f"  Output cost: {format_cost(output_cost)}")
+    if model:
+        results.update(calculate_costs(total_tokens, model))
 
-    print(f"\nTotal tokens: {total_tokens}")
-    print(f"Processed files: {processed_files}")
+    return results
+
+def calculate_costs(total_tokens, model):
+    if model not in MODELS:
+        raise ValueError(f"Unknown model: {model}")
+    prices = MODELS[model]
+    input_cost = (total_tokens / 1000000) * prices["input_price"]
+    output_cost = (total_tokens / 1000000) * prices["output_price"]
+    return {"input_cost": input_cost, "output_cost": output_cost}
+
+def main():
+    parser = argparse.ArgumentParser(description="Analyze code tokens and estimate GPT model costs.")
+    parser.add_argument("directory", nargs="?", default=".", help="Directory to analyze (default: current directory)")
+    parser.add_argument("--model", help="Specify a single model for cost estimation")
+    parser.add_argument("--version", action="version", version=f"repotokens {VERSION}")
+    args = parser.parse_args()
+
+    results = analyze_directory(args.directory, args.model)
+
+    print(f"\nTotal tokens: {results['total_tokens']}")
+    print(f"Processed files: {results['processed_files']}")
+
+    if args.model:
+        print(f"\nEstimated costs for model {args.model}:")
+        print(f"Input cost: {format_cost(results['input_cost'])}")
+        print(f"Output cost: {format_cost(results['output_cost'])}")
+    else:
+        print(f"\nEstimated costs for {results['total_tokens']} tokens from {results['processed_files']} different source files:")
+        for model, prices in MODELS.items():
+            costs = calculate_costs(results['total_tokens'], model)
+            print(f"{model}:")
+            print(f"  Input cost: {format_cost(costs['input_cost'])}")
+            print(f"  Output cost: {format_cost(costs['output_cost'])}")
 
 if __name__ == "__main__":
     main()
